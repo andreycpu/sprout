@@ -3,65 +3,88 @@ import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private let monitor = SessionMonitor()
-    private var companionWindow: NSWindow!
-    private var companionView: CompanionView!
+    private var companionWindow: NSPanel!
     private var sessionListWindow: NSPanel?
-    private var isDragging = false
-    private var dragOffset: NSPoint = .zero
+    private var stateHolder = CompanionStateHolder()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSLog("Sprout: applicationDidFinishLaunching")
         NSApp.setActivationPolicy(.accessory)
-        setupCompanionWindow()
-        monitor.onUpdate = { [weak self] in
-            self?.handleUpdate()
+
+        // Delay window creation slightly to ensure app is fully initialized
+        DispatchQueue.main.async {
+            self.setupCompanionWindow()
+            self.monitor.onUpdate = { [weak self] in
+                self?.handleUpdate()
+            }
+            self.monitor.start()
         }
-        monitor.start()
     }
 
     private func setupCompanionWindow() {
-        let size = NSSize(width: 64, height: 72)
-        guard let screen = NSScreen.main else { return }
+        guard let screen = NSScreen.main else {
+            NSLog("Sprout: No main screen!")
+            return
+        }
 
-        // Position: top center of screen, hanging down from the menu bar
-        let x = (screen.frame.width - size.width) / 2 + screen.frame.minX
-        let y = screen.frame.maxY - NSStatusBar.system.thickness - size.height
+        NSLog("Sprout: Screen frame: \(screen.frame), visible: \(screen.visibleFrame)")
 
-        let win = NSWindow(
-            contentRect: NSRect(origin: NSPoint(x: x, y: y), size: size),
-            styleMask: .borderless,
+        let size = NSSize(width: 120, height: 120)
+        let x = screen.visibleFrame.maxX - size.width - 60
+        let y = screen.visibleFrame.maxY - size.height - 60
+
+        NSLog("Sprout: Window position: x=\(x), y=\(y)")
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: x, y: y, width: size.width, height: size.height),
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        win.backgroundColor = .clear
-        win.isOpaque = false
-        win.level = .statusBar
-        win.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-        win.hasShadow = false
-        win.isMovableByWindowBackground = false
-        win.ignoresMouseEvents = false
+        panel.title = "Sprout"
+        panel.backgroundColor = NSColor.clear
+        panel.isOpaque = false
+        panel.hasShadow = false
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        panel.isMovableByWindowBackground = true
+        panel.hidesOnDeactivate = false
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.isReleasedWhenClosed = false
 
-        companionView = CompanionView(frame: NSRect(origin: .zero, size: size))
-        companionView.onClick = { [weak self] in self?.companionClicked() }
-        companionView.onDrag = { [weak self] delta in self?.handleDrag(delta) }
-        win.contentView = companionView
+        let hostingView = NSHostingView(
+            rootView: CompanionCharacter(state: stateHolder) {
+                [weak self] in self?.companionClicked()
+            }
+        )
+        hostingView.frame = NSRect(origin: .zero, size: size)
+        panel.contentView = hostingView
 
-        win.orderFrontRegardless()
-        companionWindow = win
+        companionWindow = panel
+        panel.orderFrontRegardless()
+
+        NSLog("Sprout: Window created, isVisible=\(panel.isVisible), frame=\(panel.frame)")
     }
 
     private func handleUpdate() {
         let sessions = monitor.sessions
-        let aggregate = aggregateState(sessions)
-        companionView.update(state: aggregate, sessionCount: sessions.count)
-    }
+        if sessions.isEmpty {
+            stateHolder.aggregate = .noSessions
+        } else if sessions.contains(where: { $0.state == .needsInput }) {
+            stateHolder.aggregate = .needsInput
+        } else {
+            stateHolder.aggregate = .working
+        }
+        stateHolder.sessionCount = sessions.count
 
-    private func aggregateState(_ sessions: [ClaudeSession]) -> AggregateState {
-        if sessions.isEmpty { return .noSessions }
-        if sessions.contains(where: { $0.state == .needsInput }) { return .needsInput }
-        return .working
+        if let win = companionWindow, !win.isVisible {
+            NSLog("Sprout: Window disappeared, restoring")
+            win.orderFrontRegardless()
+        }
     }
 
     private func companionClicked() {
+        NSLog("Sprout: Companion clicked")
         let needInput = monitor.sessions.filter { $0.state == .needsInput }
 
         if !needInput.isEmpty {
@@ -72,13 +95,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             showSessionList()
         }
-    }
-
-    private func handleDrag(_ delta: NSPoint) {
-        var frame = companionWindow.frame
-        frame.origin.x += delta.x
-        frame.origin.y += delta.y
-        companionWindow.setFrameOrigin(frame.origin)
     }
 
     private func showSessionList() {
@@ -92,7 +108,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let companionFrame = companionWindow.frame
         let x = companionFrame.midX - listWidth / 2
-        let y = companionFrame.minY - listHeight - 4
+        let y = companionFrame.minY - listHeight - 8
 
         let panel = NSPanel(
             contentRect: NSRect(x: x, y: y, width: listWidth, height: listHeight),
@@ -100,10 +116,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        panel.backgroundColor = .clear
+        panel.backgroundColor = NSColor.clear
         panel.isOpaque = false
-        panel.level = .statusBar
+        panel.level = .floating
         panel.hasShadow = true
+        panel.hidesOnDeactivate = false
 
         let hosting = NSHostingView(
             rootView: SessionListView(sessions: monitor.sessions) { [weak self] session in
@@ -116,11 +133,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             )
         )
         panel.contentView = hosting
-
         panel.orderFrontRegardless()
         sessionListWindow = panel
 
-        // Auto-dismiss after 5 seconds
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
             self?.sessionListWindow?.orderOut(nil)
         }
