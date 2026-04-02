@@ -1,0 +1,13 @@
+# Xcode
+*.xcodeproj/
+xcuserdata/
+*.xcworkspace/
+DerivedData/
+build/
+
+# macOS
+.DS_Store
+*.swp
+
+# Environment
+.env
