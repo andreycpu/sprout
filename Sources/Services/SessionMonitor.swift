@@ -66,7 +66,16 @@ class SessionMonitor {
         var found: [ClaudeSession] = []
 
         for file in files where file.hasSuffix(".json") {
-            let url = sessionsDir.appendingPathComponent(file)
+            let filePath = sessionsDir.appendingPathComponent(file).path
+
+            // Skip symlinks to prevent reading/deleting unintended files
+            if let attrs = try? fm.attributesOfItem(atPath: filePath),
+               let fileType = attrs[.type] as? FileAttributeType,
+               fileType == .typeSymbolicLink {
+                continue
+            }
+
+            let url = URL(fileURLWithPath: filePath)
             guard let data = try? Data(contentsOf: url),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let pid = json["pid"] as? Int,
@@ -74,12 +83,13 @@ class SessionMonitor {
                   let cwd = json["cwd"] as? String
             else { continue }
 
-            // Check if process is still alive
-            guard kill(pid_t(pid), 0) == 0 else {
-                // Clean up stale session file
-                try? fm.removeItem(at: url)
-                continue
-            }
+            // Validate sessionId format (UUID only)
+            let uuidPattern = try? NSRegularExpression(pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", options: .caseInsensitive)
+            let sessionIdRange = NSRange(sessionId.startIndex..<sessionId.endIndex, in: sessionId)
+            guard uuidPattern?.firstMatch(in: sessionId, range: sessionIdRange) != nil else { continue }
+
+            // Check if process is still alive - skip stale sessions but don't delete files
+            guard kill(pid_t(pid), 0) == 0 else { continue }
 
             let startedAt: Date
             if let ts = json["startedAt"] as? Double {
@@ -132,6 +142,13 @@ class SessionMonitor {
     }
 
     private func readLastJsonlEntry(at url: URL) -> [String: Any]? {
+        // Skip symlinks
+        let fm = FileManager.default
+        if let attrs = try? fm.attributesOfItem(atPath: url.path),
+           let fileType = attrs[.type] as? FileAttributeType,
+           fileType == .typeSymbolicLink {
+            return nil
+        }
         guard let fh = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? fh.close() }
 
