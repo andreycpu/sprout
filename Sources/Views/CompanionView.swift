@@ -3,11 +3,7 @@ import SwiftUI
 class CompanionStateHolder: ObservableObject {
     @Published var aggregate: AggregateState = .noSessions
     @Published var sessionCount: Int = 0
-    @Published var scale: CGFloat = 0.7  // User-adjustable size
-}
-
-enum HangSide {
-    case top, left, right, none
+    @Published var scale: CGFloat = 1.0
 }
 
 struct CompanionCharacter: View {
@@ -15,269 +11,194 @@ struct CompanionCharacter: View {
     var onClick: () -> Void
 
     @State private var bobOffset: CGFloat = 0
-    @State private var glowPulse: CGFloat = 0.3
     @State private var flashBright: CGFloat = 0
-    @State private var hangSide: HangSide = .top
-    @State private var blinkTimer: Bool = false
-    @State private var isBlinking: Bool = false
+    @State private var isBlinking = false
+    @State private var legFrame = 0
 
     var body: some View {
         ZStack {
-            // The hanging arm/grip
-            hangingArm
-
-            // Body
-            ZStack {
-                // Bright flash ring for needsInput
-                if state.aggregate == .needsInput {
-                    Circle()
-                        .fill(Color.green.opacity(flashBright * 0.6))
-                        .frame(width: 70, height: 70)
-                        .blur(radius: 14)
-                }
-
-                // Glow
-                Circle()
-                    .fill(stateColor.opacity(glowPulse * 0.3))
-                    .frame(width: 50, height: 50)
-                    .blur(radius: 10)
-
-                // Main sparkle body
-                SparkleBody()
-                    .fill(stateColor.opacity(state.aggregate == .needsInput ? (0.7 + flashBright * 0.3) : 0.9))
-                    .frame(width: 36, height: 36)
-                    .shadow(color: stateColor.opacity(state.aggregate == .needsInput ? flashBright : 0.6), radius: state.aggregate == .needsInput ? 12 : 6)
-
-                // Face
-                face
-
-                // Session count badge
-                if state.sessionCount > 0 {
-                    Text("\(state.sessionCount)")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(.white)
-                        .frame(width: 16, height: 16)
-                        .background(Circle().fill(Color.black.opacity(0.75)))
-                        .offset(x: 20, y: -20)
-                }
+            // Glow underneath when needs input
+            if state.aggregate == .needsInput {
+                Ellipse()
+                    .fill(Color.green.opacity(flashBright * 0.4))
+                    .frame(width: 60, height: 20)
+                    .blur(radius: 8)
+                    .offset(y: 28)
             }
-            .offset(y: bodyOffset)
+
+            // The pixel pet
+            PixelPet(
+                color: stateColor,
+                isBlinking: isBlinking,
+                legFrame: legFrame,
+                flashBright: state.aggregate == .needsInput ? flashBright : 0
+            )
+
+            // Session count badge
+            if state.sessionCount > 0 {
+                Text("\(state.sessionCount)")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white)
+                    .frame(width: 16, height: 16)
+                    .background(Circle().fill(Color.black.opacity(0.8)))
+                    .offset(x: 28, y: -22)
+            }
         }
         .offset(y: bobOffset)
         .scaleEffect(state.scale)
         .contentShape(Rectangle())
         .onTapGesture { onClick() }
+        .contextMenu {
+            Button("Smaller") { withAnimation { state.scale = max(state.scale - 0.2, 0.5) } }
+            Button("Bigger") { withAnimation { state.scale = min(state.scale + 0.2, 2.0) } }
+            Divider()
+            Button("Reset Size") { withAnimation { state.scale = 1.0 } }
+        }
         .onAppear {
-            withAnimation(.easeInOut(duration: 2.5).repeatForever(autoreverses: true)) {
-                bobOffset = 4
+            withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
+                bobOffset = 3
             }
-            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-                glowPulse = 1.0
-            }
-            withAnimation(.easeInOut(duration: 0.4).repeatForever(autoreverses: true)) {
+            withAnimation(.easeInOut(duration: 0.35).repeatForever(autoreverses: true)) {
                 flashBright = 1.0
             }
             startBlinkCycle()
-        }
-        .contextMenu {
-            Button("Smaller") { state.scale = max(state.scale - 0.15, 0.4) }
-            Button("Bigger") { state.scale = min(state.scale + 0.15, 1.5) }
-            Divider()
-            Button("Reset Size") { state.scale = 0.7 }
+            startLegAnimation()
         }
         .frame(width: 120, height: 120)
     }
 
-    private var bodyOffset: CGFloat {
-        switch hangSide {
-        case .top: return 16
-        case .left, .right, .none: return 0
-        }
-    }
-
-    private var hangingArm: some View {
-        Group {
-            switch hangSide {
-            case .top:
-                VStack(spacing: 0) {
-                    // Two little gripping arms at the top
-                    HStack(spacing: 14) {
-                        GripArm(color: stateColor)
-                            .rotationEffect(.degrees(-15))
-                        GripArm(color: stateColor)
-                            .rotationEffect(.degrees(15))
-                            .scaleEffect(x: -1, y: 1)
-                    }
-                    .offset(y: -2)
-
-                    // Thin line connecting to body
-                    Rectangle()
-                        .fill(stateColor.opacity(0.5))
-                        .frame(width: 2, height: 10)
-                }
-                .offset(y: -28)
-
-            case .left:
-                HStack(spacing: 0) {
-                    GripArm(color: stateColor)
-                        .rotationEffect(.degrees(90))
-                    Spacer()
-                }
-                .offset(x: -20)
-
-            case .right:
-                HStack(spacing: 0) {
-                    Spacer()
-                    GripArm(color: stateColor)
-                        .rotationEffect(.degrees(-90))
-                        .scaleEffect(x: -1, y: 1)
-                }
-                .offset(x: 20)
-
-            case .none:
-                EmptyView()
-            }
-        }
-    }
-
-    private var face: some View {
-        VStack(spacing: 3) {
-            // Eyes
-            HStack(spacing: 8) {
-                EyeView(isBlinking: isBlinking)
-                EyeView(isBlinking: isBlinking)
-            }
-
-            // Mouth - changes with state
-            mouth
-        }
-        .offset(y: 1)
-    }
-
-    private var mouth: some View {
-        Group {
-            switch state.aggregate {
-            case .noSessions:
-                // Flat line - neutral/sleeping
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(Color.white.opacity(0.7))
-                    .frame(width: 8, height: 2)
-            case .working:
-                // Small o - concentrating
-                Circle()
-                    .stroke(Color.white.opacity(0.8), lineWidth: 1.5)
-                    .frame(width: 5, height: 5)
-            case .needsInput:
-                // Smile - wants attention
-                SmilePath()
-                    .stroke(Color.white.opacity(0.9), lineWidth: 1.5)
-                    .frame(width: 10, height: 5)
-            }
-        }
-    }
-
     private var stateColor: Color {
         switch state.aggregate {
-        case .noSessions: return .red
-        case .working: return .orange
-        case .needsInput: return .green
+        case .noSessions: return Color(red: 0.85, green: 0.35, blue: 0.3)
+        case .working: return Color(red: 0.9, green: 0.65, blue: 0.3)
+        case .needsInput: return Color(red: 0.3, green: 0.85, blue: 0.4)
         }
     }
 
     private func startBlinkCycle() {
         func scheduleBlink() {
-            let delay = Double.random(in: 2.5...5.0)
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                withAnimation(.easeInOut(duration: 0.1)) { isBlinking = true }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    withAnimation(.easeInOut(duration: 0.1)) { isBlinking = false }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double.random(in: 2.0...4.5)) {
+                isBlinking = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                    isBlinking = false
                     scheduleBlink()
                 }
             }
         }
         scheduleBlink()
     }
-}
 
-// MARK: - Sub-shapes
-
-struct SparkleBody: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let center = CGPoint(x: rect.midX, y: rect.midY)
-        let outerRadius = min(rect.width, rect.height) / 2
-        let innerRadius = outerRadius * 0.42
-        let rayCount = 8
-
-        for i in 0..<(rayCount * 2) {
-            let angle = (CGFloat(i) / CGFloat(rayCount * 2)) * .pi * 2 - .pi / 2
-            let radius = i % 2 == 0 ? outerRadius : innerRadius
-            let point = CGPoint(
-                x: center.x + cos(angle) * radius,
-                y: center.y + sin(angle) * radius
-            )
-            if i == 0 { path.move(to: point) }
-            else { path.addLine(to: point) }
+    private func startLegAnimation() {
+        Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
+            legFrame = (legFrame + 1) % 2
         }
-        path.closeSubpath()
-        return path
     }
 }
 
-struct GripArm: View {
+// MARK: - Pixel Art Pet
+
+struct PixelPet: View {
     let color: Color
-
-    var body: some View {
-        ZStack {
-            // Arm
-            RoundedRectangle(cornerRadius: 2)
-                .fill(color.opacity(0.7))
-                .frame(width: 4, height: 14)
-
-            // Little hand/grip at the end
-            Circle()
-                .fill(color.opacity(0.9))
-                .frame(width: 6, height: 6)
-                .offset(y: -7)
-        }
-    }
-}
-
-struct EyeView: View {
     let isBlinking: Bool
+    let legFrame: Int
+    let flashBright: CGFloat
+
+    private let px: CGFloat = 5  // pixel size
 
     var body: some View {
-        ZStack {
-            if isBlinking {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(Color.white.opacity(0.9))
-                    .frame(width: 7, height: 2)
-            } else {
-                Ellipse()
-                    .fill(Color.white)
-                    .frame(width: 7, height: 9)
-                Circle()
-                    .fill(Color.black)
-                    .frame(width: 4, height: 4)
-                    .offset(y: 1)
-                // Highlight
-                Circle()
-                    .fill(Color.white.opacity(0.8))
-                    .frame(width: 2, height: 2)
-                    .offset(x: 1, y: -1)
+        Canvas { context, size in
+            let ox = size.width / 2 - px * 5  // center the 10px-wide body
+            let oy = size.height / 2 - px * 4
+
+            // Draw body pixels
+            for (row, cols) in bodyPixels.enumerated() {
+                for col in cols {
+                    let rect = CGRect(x: ox + CGFloat(col) * px, y: oy + CGFloat(row) * px, width: px, height: px)
+                    context.fill(Path(rect), with: .color(bodyColor(row: row)))
+                }
             }
+
+            // Eyes
+            if isBlinking {
+                // Blink - just thin lines
+                let eyeY = oy + 2 * px
+                context.fill(Path(CGRect(x: ox + 3 * px, y: eyeY + px * 0.3, width: px, height: px * 0.4)), with: .color(.black))
+                context.fill(Path(CGRect(x: ox + 6 * px, y: eyeY + px * 0.3, width: px, height: px * 0.4)), with: .color(.black))
+            } else {
+                // Open eyes
+                let eyeY = oy + 2 * px
+                context.fill(Path(CGRect(x: ox + 3 * px, y: eyeY, width: px, height: px)), with: .color(.black))
+                context.fill(Path(CGRect(x: ox + 6 * px, y: eyeY, width: px, height: px)), with: .color(.black))
+                // Eye highlights
+                context.fill(Path(CGRect(x: ox + 3 * px + 1, y: eyeY + 1, width: px * 0.4, height: px * 0.4)), with: .color(.white.opacity(0.7)))
+                context.fill(Path(CGRect(x: ox + 6 * px + 1, y: eyeY + 1, width: px * 0.4, height: px * 0.4)), with: .color(.white.opacity(0.7)))
+            }
+
+            // Mouth
+            let mouthY = oy + 4 * px
+            context.fill(Path(CGRect(x: ox + 4 * px, y: mouthY, width: px * 0.8, height: px * 0.5)), with: .color(.black.opacity(0.6)))
+
+            // Legs (animated)
+            drawLegs(context: &context, ox: ox, oy: oy)
+
+            // Tail
+            let tailY = oy + 5 * px
+            context.fill(Path(CGRect(x: ox + 9 * px, y: tailY, width: px, height: px)), with: .color(darkerColor))
+            context.fill(Path(CGRect(x: ox + 10 * px, y: tailY + px, width: px, height: px)), with: .color(darkerColor))
+            context.fill(Path(CGRect(x: ox + 11 * px, y: tailY + px, width: px, height: px * 0.6)), with: .color(darkerColor))
+        }
+        .frame(width: 90, height: 70)
+        .shadow(color: flashBright > 0.5 ? color.opacity(0.8) : .clear, radius: 10)
+    }
+
+    // Body shape - each row is a list of filled column indices
+    private var bodyPixels: [[Int]] {
+        [
+            //       row 0: top of head
+            [2, 3, 4, 5, 6, 7],
+            //       row 1: head wider
+            [1, 2, 3, 4, 5, 6, 7, 8],
+            //       row 2: eyes row
+            [1, 2, 3, 4, 5, 6, 7, 8],
+            //       row 3: face
+            [1, 2, 3, 4, 5, 6, 7, 8],
+            //       row 4: mouth/chin
+            [2, 3, 4, 5, 6, 7, 8],
+            //       row 5: body
+            [2, 3, 4, 5, 6, 7, 8],
+            //       row 6: lower body
+            [2, 3, 4, 5, 6, 7],
+        ]
+    }
+
+    private func bodyColor(row: Int) -> Color {
+        if row <= 1 {
+            return color // head top - main color
+        } else if row <= 4 {
+            return color.opacity(0.85) // face area - slightly different
+        } else {
+            return color.opacity(0.75) // lower body - darker
         }
     }
-}
 
-struct SmilePath: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX, y: rect.minY),
-            control: CGPoint(x: rect.midX, y: rect.maxY + 2)
-        )
-        return path
+    private var darkerColor: Color {
+        color.opacity(0.5)
+    }
+
+    private func drawLegs(context: inout GraphicsContext, ox: CGFloat, oy: CGFloat) {
+        let legY = oy + 7 * px
+        let legColor = color.opacity(0.7)
+
+        if legFrame == 0 {
+            // Frame 0: legs spread
+            context.fill(Path(CGRect(x: ox + 2 * px, y: legY, width: px, height: px)), with: .color(legColor))
+            context.fill(Path(CGRect(x: ox + 4 * px, y: legY, width: px, height: px)), with: .color(legColor))
+            context.fill(Path(CGRect(x: ox + 6 * px, y: legY, width: px, height: px)), with: .color(legColor))
+        } else {
+            // Frame 1: legs together
+            context.fill(Path(CGRect(x: ox + 3 * px, y: legY, width: px, height: px)), with: .color(legColor))
+            context.fill(Path(CGRect(x: ox + 5 * px, y: legY, width: px, height: px)), with: .color(legColor))
+            context.fill(Path(CGRect(x: ox + 7 * px, y: legY, width: px, height: px)), with: .color(legColor))
+        }
     }
 }
